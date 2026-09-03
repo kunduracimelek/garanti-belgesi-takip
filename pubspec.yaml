@@ -1,7 +1,7 @@
 name: vaultify
 description: "Ürünlerinizin garanti sürelerini tek yerden takip edin."
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.1.0+2
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -36,6 +36,8 @@ dependencies:
   flutter_local_notifications: ^17.2.2
   timezone: ^0.9.4
   permission_handler: ^11.3.1
+  http: ^1.2.2
+  package_info_plus: ^8.0.2
 
   # Biyometrik kilit
   local_auth: ^2.3.0

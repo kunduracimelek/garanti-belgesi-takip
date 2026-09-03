@@ -16,6 +16,7 @@ class NotificationService {
   bool _initialized = false;
 
   static const _dailySummaryId = 999999;
+  static const _updateAvailableId = 999998;
 
   Future<void> init() async {
     if (_initialized) return;
@@ -23,7 +24,8 @@ class NotificationService {
 
     const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
     const iosInit = DarwinInitializationSettings();
-    const initSettings = InitializationSettings(android: androidInit, iOS: iosInit);
+    const initSettings =
+        InitializationSettings(android: androidInit, iOS: iosInit);
     await _plugin.initialize(initSettings);
 
     const androidChannel = AndroidNotificationChannel(
@@ -36,6 +38,16 @@ class NotificationService {
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(androidChannel);
+    const updateChannel = AndroidNotificationChannel(
+      'vaultify_updates_channel',
+      'Uygulama Güncellemeleri',
+      description: 'Yeni Vaultify sürümleri için bildirimler',
+      importance: Importance.high,
+    );
+    await _plugin
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(updateChannel);
 
     _initialized = true;
   }
@@ -47,13 +59,38 @@ class NotificationService {
         ?.requestNotificationsPermission();
     final iosGranted = await _plugin
         .resolvePlatformSpecificImplementation<
-        IOSFlutterLocalNotificationsPlugin>()
+            IOSFlutterLocalNotificationsPlugin>()
         ?.requestPermissions(alert: true, badge: true, sound: true);
     return (androidGranted ?? true) && (iosGranted ?? true);
   }
 
+  Future<void> showUpdateAvailable({
+    required String version,
+    required String downloadUrl,
+  }) async {
+    await requestPermissions();
+    const androidDetails = AndroidNotificationDetails(
+      'vaultify_updates_channel',
+      'Uygulama Güncellemeleri',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+    const details = NotificationDetails(
+      android: androidDetails,
+      iOS: DarwinNotificationDetails(),
+    );
+    await _plugin.show(
+      _updateAvailableId,
+      'Yeni Vaultify güncellemesi hazır',
+      'Sürüm $version indirilmeye hazır. GitHub yayın sayfasından güncelleyebilirsiniz.',
+      details,
+      payload: downloadUrl,
+    );
+  }
+
   int _oneMonthId(String productId) => productId.hashCode & 0x7fffffff;
-  int _lastWeekId(String productId) => (productId.hashCode ^ 0x5f5f5f5f) & 0x7fffffff;
+  int _lastWeekId(String productId) =>
+      (productId.hashCode ^ 0x5f5f5f5f) & 0x7fffffff;
 
   Future<void> cancelForProduct(String productId) async {
     await _plugin.cancel(_oneMonthId(productId));
@@ -74,7 +111,8 @@ class NotificationService {
       importance: Importance.high,
       priority: Priority.high,
     );
-    const details = NotificationDetails(android: androidDetails, iOS: DarwinNotificationDetails());
+    const details = NotificationDetails(
+        android: androidDetails, iOS: DarwinNotificationDetails());
 
     if (settings.notifyOneMonthBefore) {
       final fireDate = product.endDate.subtract(const Duration(days: 30));
@@ -151,7 +189,8 @@ class NotificationService {
       importance: Importance.defaultImportance,
       priority: Priority.defaultPriority,
     );
-    const details = NotificationDetails(android: androidDetails, iOS: DarwinNotificationDetails());
+    const details = NotificationDetails(
+        android: androidDetails, iOS: DarwinNotificationDetails());
 
     await _plugin.zonedSchedule(
       _dailySummaryId,

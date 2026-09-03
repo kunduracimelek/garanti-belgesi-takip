@@ -28,29 +28,27 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
     final bgColor = isDark
         ? AppColors.darkBgMain.withValues(alpha: 0.85)
         : AppColors.lightBackground.withValues(alpha: 0.85);
-    final borderColor = isDark ? Colors.white.withValues(alpha: 0.06) : Colors.black.withValues(alpha: 0.04);
+    final borderColor = isDark
+        ? Colors.white.withValues(alpha: 0.06)
+        : Colors.black.withValues(alpha: 0.04);
 
     return ClipRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
         child: Container(
           height: height,
-          padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top),
           decoration: BoxDecoration(
             color: bgColor,
             border: Border(bottom: BorderSide(color: borderColor)),
           ),
-          child: SafeArea(
-            bottom: false,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                children: [
-                  if (leading != null) leading!,
-                  Expanded(child: title),
-                  if (actions != null) ...actions!,
-                ],
-              ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(
+              children: [
+                if (leading != null) leading!,
+                Expanded(child: title),
+                if (actions != null) ...actions!,
+              ],
             ),
           ),
         ),

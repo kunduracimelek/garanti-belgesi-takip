@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import '../../models/product.dart';
@@ -45,7 +46,8 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
     _nameCtrl = TextEditingController(text: e?.name ?? '');
     _storeCtrl = TextEditingController(text: e?.store ?? '');
     _invoiceNoCtrl = TextEditingController(text: e?.invoiceNumber ?? '');
-    _priceCtrl = TextEditingController(text: e?.price?.toStringAsFixed(2) ?? '');
+    _priceCtrl =
+        TextEditingController(text: e?.price?.toStringAsFixed(2) ?? '');
     _serialCtrl = TextEditingController(text: e?.serialNumber ?? '');
     _notesCtrl = TextEditingController(text: e?.notes ?? '');
     if (e != null) {
@@ -69,20 +71,43 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
   }
 
   Future<void> _pickAndExtract({required ImageSource? source}) async {
+    final allowed = await _requestImportPermission(source);
+    if (!allowed) return;
+
     String? path;
-    if (source != null) {
-      final picker = ImagePicker();
-      final file = await picker.pickImage(source: source, imageQuality: 85);
-      path = file?.path;
-    } else {
-      final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf']);
-      path = result?.files.single.path;
+    try {
+      if (source != null) {
+        final picker = ImagePicker();
+        final file = await picker.pickImage(source: source, imageQuality: 85);
+        path = file?.path;
+      } else {
+        // Android'in sistem dosya seçicisi, kullanıcının seçtiği PDF/görsele
+        // uygulamaya özel erişim izni verir; geniş depolama izni gerekmez.
+        final result = await FilePicker.platform.pickFiles(
+          type: FileType.custom,
+          allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf'],
+        );
+        path = result?.files.single.path;
+      }
+    } catch (_) {
+      if (mounted) {
+        _showMessage('Dosya seçici açılamadı. Lütfen tekrar deneyin.');
+      }
+      return;
     }
     if (path == null) return;
 
     // Belgeyi uygulamanın kendi dizinine kopyala ki geçici dosya silinse
     // bile fatura kalıcı olarak saklanabilsin.
-    final savedPath = await _persistFile(path);
+    String savedPath;
+    try {
+      savedPath = await _persistFile(path);
+    } catch (_) {
+      if (mounted) {
+        _showMessage('Belge uygulamaya kaydedilemedi. Lütfen tekrar deneyin.');
+      }
+      return;
+    }
     setState(() {
       _invoiceFilePath = savedPath;
     });
@@ -96,30 +121,106 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
     }
 
     setState(() => _isExtracting = true);
-    final info = await _ocr.extractFromImage(File(savedPath));
-    setState(() => _isExtracting = false);
+    ExtractedInvoiceInfo? info;
+    try {
+      info = await _ocr.extractFromImage(File(savedPath));
+    } catch (_) {
+      if (mounted) {
+        _showMessage('Belge okunamadı. Bilgileri elle girebilirsiniz.');
+      }
+      return;
+    } finally {
+      if (mounted) {
+        setState(() => _isExtracting = false);
+      }
+    }
+    if (!mounted) return;
 
     if (info == null || !info.hasAnyMatch) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Belgeden otomatik bilgi okunamadı, alanları elle doldurabilirsiniz.')),
+          const SnackBar(
+              content: Text(
+                  'Belgeden otomatik bilgi okunamadı, alanları elle doldurabilirsiniz.')),
         );
       }
       return;
     }
 
     setState(() {
-      if (info.storeName != null && _storeCtrl.text.isEmpty) _storeCtrl.text = info.storeName!;
-      if (info.invoiceNumber != null && _invoiceNoCtrl.text.isEmpty) _invoiceNoCtrl.text = info.invoiceNumber!;
-      if (info.purchaseDate != null) _purchaseDate = info.purchaseDate!;
-      if (info.totalAmount != null && _priceCtrl.text.isEmpty) _priceCtrl.text = info.totalAmount!.toStringAsFixed(2);
+      if (info!.storeName != null && _storeCtrl.text.isEmpty) {
+        _storeCtrl.text = info.storeName!;
+      }
+      if (info.invoiceNumber != null && _invoiceNoCtrl.text.isEmpty) {
+        _invoiceNoCtrl.text = info.invoiceNumber!;
+      }
+      if (info.purchaseDate != null) {
+        _purchaseDate = info.purchaseDate!;
+      }
+      if (info.totalAmount != null && _priceCtrl.text.isEmpty) {
+        _priceCtrl.text = info.totalAmount!.toStringAsFixed(2);
+      }
     });
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Belgeden bilgiler alındı, lütfen kontrol edin.')),
+        const SnackBar(
+            content: Text('Belgeden bilgiler alındı, lütfen kontrol edin.')),
       );
     }
+  }
+
+  Future<bool> _requestImportPermission(ImageSource? source) async {
+    if (source == ImageSource.camera) {
+      final status = await Permission.camera.request();
+      if (status.isGranted) return true;
+      if (mounted) {
+        _showPermissionMessage(
+            'Kamera izni olmadan fotoğraf çekilemez.', status);
+      }
+      return false;
+    }
+
+    if (source == ImageSource.gallery) {
+      // Android 13+ için fotoğraf/medya izni; eski Android sürümlerinde
+      // storage izniyle geriye dönük uyumluluk sağlanır.
+      var status = await Permission.photos.request();
+      if (!status.isGranted && !status.isLimited) {
+        status = await Permission.storage.request();
+      }
+      if (status.isGranted || status.isLimited) return true;
+      if (mounted) {
+        _showPermissionMessage(
+            'Galeriden belge seçmek için fotoğraf erişim izni gerekir.',
+            status);
+      }
+      return false;
+    }
+
+    // PDF ve diğer belgeler Android'in dosya seçicisinden seçilir. Bu seçici,
+    // seçilen dosyaya erişimi kullanıcı onayıyla verir ve gereksiz geniş
+    // depolama izni istemeden çalışır.
+    return true;
+  }
+
+  void _showPermissionMessage(String message, PermissionStatus status) {
+    _showMessage(
+      status.isPermanentlyDenied
+          ? '$message Ayarlar bölümünden izin verin.'
+          : message,
+      openSettings: status.isPermanentlyDenied,
+    );
+  }
+
+  void _showMessage(String message, {bool openSettings = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        action: openSettings
+            ? const SnackBarAction(label: 'Ayarlar', onPressed: openAppSettings)
+            : null,
+      ),
+    );
   }
 
   Future<String> _persistFile(String sourcePath) async {
@@ -152,11 +253,14 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
         name: _nameCtrl.text.trim(),
         category: _category,
         store: _storeCtrl.text.trim().isEmpty ? null : _storeCtrl.text.trim(),
-        invoiceNumber: _invoiceNoCtrl.text.trim().isEmpty ? null : _invoiceNoCtrl.text.trim(),
+        invoiceNumber: _invoiceNoCtrl.text.trim().isEmpty
+            ? null
+            : _invoiceNoCtrl.text.trim(),
         purchaseDate: _purchaseDate,
         warrantyMonths: _warrantyMonths,
         price: price,
-        serialNumber: _serialCtrl.text.trim().isEmpty ? null : _serialCtrl.text.trim(),
+        serialNumber:
+            _serialCtrl.text.trim().isEmpty ? null : _serialCtrl.text.trim(),
         invoiceFilePath: _invoiceFilePath,
         notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
       );
@@ -167,11 +271,14 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
         name: _nameCtrl.text.trim(),
         category: _category,
         store: _storeCtrl.text.trim().isEmpty ? null : _storeCtrl.text.trim(),
-        invoiceNumber: _invoiceNoCtrl.text.trim().isEmpty ? null : _invoiceNoCtrl.text.trim(),
+        invoiceNumber: _invoiceNoCtrl.text.trim().isEmpty
+            ? null
+            : _invoiceNoCtrl.text.trim(),
         purchaseDate: _purchaseDate,
         warrantyMonths: _warrantyMonths,
         price: price,
-        serialNumber: _serialCtrl.text.trim().isEmpty ? null : _serialCtrl.text.trim(),
+        serialNumber:
+            _serialCtrl.text.trim().isEmpty ? null : _serialCtrl.text.trim(),
         invoiceFilePath: _invoiceFilePath,
         notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
       );
@@ -207,13 +314,17 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
                       Container(
                         width: 44,
                         height: 44,
-                        decoration: BoxDecoration(color: AppColors.primary, borderRadius: BorderRadius.circular(12)),
+                        decoration: BoxDecoration(
+                            color: AppColors.primary,
+                            borderRadius: BorderRadius.circular(12)),
                         child: _isExtracting
                             ? const Padding(
                                 padding: EdgeInsets.all(12),
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white),
                               )
-                            : const Icon(Icons.receipt_long_rounded, color: Colors.white),
+                            : const Icon(Icons.receipt_long_rounded,
+                                color: Colors.white),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -221,12 +332,16 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              _invoiceFilePath == null ? 'Fatura / Garanti Belgesi Yükle' : 'Belge Yüklendi ✓',
-                              style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                              _invoiceFilePath == null
+                                  ? 'Fatura / Garanti Belgesi Yükle'
+                                  : 'Belge Yüklendi ✓',
+                              style: theme.textTheme.titleSmall
+                                  ?.copyWith(fontWeight: FontWeight.bold),
                             ),
                             Text(
                               'Fotoğraf çekin, galeriden veya dosyalardan seçin — bilgiler otomatik doldurulmaya çalışılır',
-                              style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant),
                             ),
                           ],
                         ),
@@ -241,7 +356,8 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
             TextFormField(
               controller: _nameCtrl,
               decoration: const InputDecoration(labelText: 'Ürün Adı'),
-              validator: (v) => (v == null || v.trim().isEmpty) ? 'Ürün adı zorunlu' : null,
+              validator: (v) =>
+                  (v == null || v.trim().isEmpty) ? 'Ürün adı zorunlu' : null,
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<ProductCategory>(
@@ -249,7 +365,13 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
               decoration: const InputDecoration(labelText: 'Kategori'),
               items: [
                 for (final c in ProductCategory.values)
-                  DropdownMenuItem(value: c, child: Row(children: [Icon(c.icon, size: 18), const SizedBox(width: 8), Text(c.label)])),
+                  DropdownMenuItem(
+                      value: c,
+                      child: Row(children: [
+                        Icon(c.icon, size: 18),
+                        const SizedBox(width: 8),
+                        Text(c.label)
+                      ])),
               ],
               onChanged: (v) => setState(() => _category = v ?? _category),
             ),
@@ -257,8 +379,10 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
             InkWell(
               onTap: _pickDate,
               child: InputDecorator(
-                decoration: const InputDecoration(labelText: 'Satın Alma Tarihi'),
-                child: Text('${_purchaseDate.day}.${_purchaseDate.month}.${_purchaseDate.year}'),
+                decoration:
+                    const InputDecoration(labelText: 'Satın Alma Tarihi'),
+                child: Text(
+                    '${_purchaseDate.day}.${_purchaseDate.month}.${_purchaseDate.year}'),
               ),
             ),
             const SizedBox(height: 20),
@@ -266,25 +390,45 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
             const SizedBox(height: 8),
             Row(
               children: [
-                _WarrantyChip(label: '+1 Yıl', selected: _warrantyMonths == 12, onTap: () => setState(() => _warrantyMonths = 12)),
+                _WarrantyChip(
+                    label: '+1 Yıl',
+                    selected: _warrantyMonths == 12,
+                    onTap: () => setState(() => _warrantyMonths = 12)),
                 const SizedBox(width: 8),
-                _WarrantyChip(label: '+2 Yıl (Yasal)', selected: _warrantyMonths == 24, onTap: () => setState(() => _warrantyMonths = 24)),
+                _WarrantyChip(
+                    label: '+2 Yıl (Yasal)',
+                    selected: _warrantyMonths == 24,
+                    onTap: () => setState(() => _warrantyMonths = 24)),
                 const SizedBox(width: 8),
-                _WarrantyChip(label: '+3 Yıl', selected: _warrantyMonths == 36, onTap: () => setState(() => _warrantyMonths = 36)),
+                _WarrantyChip(
+                    label: '+3 Yıl',
+                    selected: _warrantyMonths == 36,
+                    onTap: () => setState(() => _warrantyMonths = 36)),
               ],
             ),
             const SizedBox(height: 20),
-            TextFormField(controller: _storeCtrl, decoration: const InputDecoration(labelText: 'Satıcı (opsiyonel)')),
+            TextFormField(
+                controller: _storeCtrl,
+                decoration:
+                    const InputDecoration(labelText: 'Satıcı (opsiyonel)')),
             const SizedBox(height: 16),
-            TextFormField(controller: _invoiceNoCtrl, decoration: const InputDecoration(labelText: 'Fatura No (opsiyonel)')),
+            TextFormField(
+                controller: _invoiceNoCtrl,
+                decoration:
+                    const InputDecoration(labelText: 'Fatura No (opsiyonel)')),
             const SizedBox(height: 16),
             TextFormField(
               controller: _priceCtrl,
-              decoration: const InputDecoration(labelText: 'Toplam Tutar (opsiyonel)', suffixText: '₺'),
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                  labelText: 'Toplam Tutar (opsiyonel)', suffixText: '₺'),
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
             ),
             const SizedBox(height: 16),
-            TextFormField(controller: _serialCtrl, decoration: const InputDecoration(labelText: 'Seri No (opsiyonel)')),
+            TextFormField(
+                controller: _serialCtrl,
+                decoration:
+                    const InputDecoration(labelText: 'Seri No (opsiyonel)')),
             const SizedBox(height: 16),
             TextFormField(
               controller: _notesCtrl,
@@ -300,7 +444,9 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
                 icon: const Icon(Icons.rocket_launch_rounded),
                 label: Text(_isEditing ? 'Güncelle' : 'Kaydet'),
                 style: FilledButton.styleFrom(
-                  backgroundColor: isDark ? AppColors.secondaryFixedDim : AppColors.secondary,
+                  backgroundColor: isDark
+                      ? AppColors.secondaryFixedDim
+                      : AppColors.secondary,
                   foregroundColor: isDark ? AppColors.darkBgMain : Colors.white,
                 ),
               ),
@@ -352,7 +498,8 @@ class _WarrantyChip extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
-  const _WarrantyChip({required this.label, required this.selected, required this.onTap});
+  const _WarrantyChip(
+      {required this.label, required this.selected, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -363,13 +510,21 @@ class _WarrantyChip extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: 14),
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: selected ? AppColors.primary : Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+            color: selected
+                ? AppColors.primary
+                : Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest
+                    .withValues(alpha: 0.3),
             borderRadius: BorderRadius.circular(14),
           ),
           child: Text(
             label,
             textAlign: TextAlign.center,
-            style: TextStyle(color: selected ? Colors.white : null, fontWeight: FontWeight.w600, fontSize: 12),
+            style: TextStyle(
+                color: selected ? Colors.white : null,
+                fontWeight: FontWeight.w600,
+                fontSize: 12),
           ),
         ),
       ),
