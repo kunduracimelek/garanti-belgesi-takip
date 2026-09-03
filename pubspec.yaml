@@ -26,7 +26,7 @@ dependencies:
 
   # Belge / fatura yükleme
   image_picker: ^1.1.2
-  file_picker: ^8.0.6
+  file_picker: ^8.0.7
   open_filex: ^4.5.0
 
   # Faturadan otomatik bilgi çıkarma (cihaz üzerinde OCR, sunucu gerekmez)
