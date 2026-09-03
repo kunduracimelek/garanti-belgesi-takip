@@ -1,0 +1,55 @@
+name: vaultify
+description: "Ürünlerinizin garanti sürelerini tek yerden takip edin."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+
+  # State management
+  provider: ^6.1.2
+
+  # Yerel depolama
+  shared_preferences: ^2.2.3
+  path_provider: ^2.1.3
+
+  # Yardımcılar
+  intl: ^0.20.2
+  uuid: ^4.4.0
+
+  # Belge / fatura yükleme
+  image_picker: ^1.1.2
+  file_picker: ^8.0.6
+  open_filex: ^4.5.0
+
+  # Faturadan otomatik bilgi çıkarma (cihaz üzerinde OCR, sunucu gerekmez)
+  google_mlkit_text_recognition: ^0.13.0
+
+  # Garanti bitiş bildirimleri
+  flutter_local_notifications: ^17.2.2
+  timezone: ^0.9.4
+  permission_handler: ^11.3.1
+
+  # Biyometrik kilit
+  local_auth: ^2.3.0
+
+  # Dışa aktarma / paylaşma
+  share_plus: ^9.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  # Uygulama ikonu / görselleri eklemek isterseniz buraya assets tanımlayın:
+  # assets:
+  #   - assets/images/
