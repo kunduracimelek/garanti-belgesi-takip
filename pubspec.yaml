@@ -1,7 +1,7 @@
 name: vaultify
 description: "Ürünlerinizin garanti sürelerini tek yerden takip edin."
 publish_to: 'none'
-version: 1.1.0+2
+version: 1.1.0+2002
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
