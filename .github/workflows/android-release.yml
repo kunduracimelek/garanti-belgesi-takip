@@ -1,0 +1,40 @@
+name: Android release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.8
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Align file_picker compile SDK
+        run: |
+          find "$HOME/.pub-cache" -path '*/file_picker-8.0.7/android/build.gradle' \
+            -exec sed -i 's/compileSdk 34/compileSdk 36/' {} \;
+
+      - name: Build ARM64 release APK
+        run: flutter build apk --release --target-platform android-arm64
+
+      - name: Upload APK to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete-asset v1.0.0 Vaultify-Android.apk --repo "${{ github.repository }}" --yes || true
+          gh release upload v1.0.0 build/app/outputs/flutter-apk/app-release.apk#Vaultify-Android.apk \
+            --repo "${{ github.repository }}" --clobber
